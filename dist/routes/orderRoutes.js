@@ -1,7 +1,15 @@
 "use strict";
+// import { Router } from "express";
+// import { handleCreateOrder } from "../controllers/orderController";
 Object.defineProperty(exports, "__esModule", { value: true });
+// const router = Router();
+// router.post("/", handleCreateOrder);
+// export default router;
 const express_1 = require("express");
 const orderController_1 = require("../controllers/orderController");
 const router = (0, express_1.Router)();
+router.get("/", orderController_1.handleGetOrders);
+router.get("/:id", orderController_1.handleGetOrderById);
 router.post("/", orderController_1.handleCreateOrder);
+router.patch("/:id/status", orderController_1.handleUpdateOrderStatus);
 exports.default = router;

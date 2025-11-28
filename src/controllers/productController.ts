@@ -4,6 +4,8 @@ import {
   getProductBySlug,
   listProducts,
   ProductFilters,
+  createProduct,
+  CreateProductData,
 } from "../services/productService";
 
 export async function handleListProducts(
@@ -66,6 +68,29 @@ export async function handleGetProductBySlug(
     }
 
     res.json(product);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function handleCreateProduct(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const productData: CreateProductData = req.body;
+    // Basic validation
+    if (!productData.name || !productData.name.trim()) {
+      return res.status(400).json({ message: "Product name is required" });
+    }
+
+    if (!productData.price || productData.price <= 0) {
+      return res.status(400).json({ message: "Valid price is required" });
+    }
+
+    const product = await createProduct(productData);
+    res.status(201).json(product);
   } catch (error) {
     next(error);
   }

@@ -9,6 +9,35 @@ export interface ProductFilters {
   category?: "Spare Parts" | "Accessories";
 }
 
+export interface CreateProductData {
+  name: string;
+  description: string;
+  price: number;
+  originalPrice?: number;
+  type: ProductType;
+  categoryId: number;
+  brandId: number;
+  modelId: number;
+  condition?: string;
+  offerTag?: string;
+  slug?: string;
+  mainYear?: number;
+  availabilityStatus?: AvailabilityStatus;
+  image?: string;
+  // Fitment data
+  fitments?: {
+    side: Side;
+    yearFrom: number;
+    yearTo: number;
+    compatibilityNotes?: string;
+  }[];
+  // Image data
+  images?: {
+    url: string;
+    isPrimary?: boolean;
+  }[];
+}
+
 export interface FrontendProduct {
   id: string;
   name: string;
@@ -163,6 +192,64 @@ export async function getProductBySlug(
   }
 
   return mapDbProductToFrontend(product);
+}
+
+export async function createProduct(
+  data: CreateProductData
+): Promise<FrontendProduct> {
+  const {
+    fitments = [],
+    images = [],
+    availabilityStatus = AvailabilityStatus.AVAILABLE, // Default value
+    ...productData
+  } = data;
+
+  // Generate slug if not provided
+  const slug = productData.slug || generateSlug(productData.name);
+
+  // Create the product with nested relations
+  const product = await prisma.product.create({
+    data: {
+      ...productData,
+      slug,
+      availabilityStatus, // Now this is guaranteed to have a value
+      price: new Prisma.Decimal(productData.price),
+      originalPrice: productData.originalPrice 
+        ? new Prisma.Decimal(productData.originalPrice)
+        : null,
+      // Create relations
+      fitments: {
+        create: fitments.length > 0 ? fitments : [
+          {
+            side: Side.UNIVERSAL,
+            yearFrom: productData.mainYear || new Date().getFullYear(),
+            yearTo: productData.mainYear || new Date().getFullYear(),
+          }
+        ],
+      },
+      images: {
+        create: images.length > 0 ? images : [
+          {
+            url: productData.image || FALLBACK_IMAGE,
+            isPrimary: true,
+          },
+        ],
+      },
+    },
+    include: PRODUCT_INCLUDE,
+  });
+
+  return mapDbProductToFrontend(product);
+}
+
+// Helper function to generate slug
+function generateSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, '')
+    .replace(/[\s_-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
 
 function mapDbProductToFrontend(product: ProductWithRelations): FrontendProduct {

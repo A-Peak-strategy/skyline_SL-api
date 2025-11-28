@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.handleListProducts = handleListProducts;
 exports.handleGetProductById = handleGetProductById;
 exports.handleGetProductBySlug = handleGetProductBySlug;
+exports.handleCreateProduct = handleCreateProduct;
 const productService_1 = require("../services/productService");
 async function handleListProducts(req, res, next) {
     try {
@@ -47,6 +48,23 @@ async function handleGetProductBySlug(req, res, next) {
             return res.status(404).json({ message: "Product not found" });
         }
         res.json(product);
+    }
+    catch (error) {
+        next(error);
+    }
+}
+async function handleCreateProduct(req, res, next) {
+    try {
+        const productData = req.body;
+        // Basic validation
+        if (!productData.name || !productData.name.trim()) {
+            return res.status(400).json({ message: "Product name is required" });
+        }
+        if (!productData.price || productData.price <= 0) {
+            return res.status(400).json({ message: "Valid price is required" });
+        }
+        const product = await (0, productService_1.createProduct)(productData);
+        res.status(201).json(product);
     }
     catch (error) {
         next(error);
