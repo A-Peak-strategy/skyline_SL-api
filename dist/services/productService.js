@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.listProducts = listProducts;
 exports.getProductById = getProductById;
 exports.getProductBySlug = getProductBySlug;
+exports.createProduct = createProduct;
 const client_1 = require("@prisma/client");
 const prismaClient_1 = require("../prismaClient");
 const PRODUCT_INCLUDE = {
@@ -45,12 +46,12 @@ async function listProducts(filters = {}) {
     }
     if (make) {
         conditions.push({
-            brand: { name: { equals: make, mode: "insensitive" } },
+            brand: { name: { equals: make } },
         });
     }
     if (model) {
         conditions.push({
-            model: { name: { contains: model, mode: "insensitive" } },
+            model: { name: { contains: model } },
         });
     }
     const sideEnum = resolveSideEnum(side);
@@ -109,6 +110,53 @@ async function getProductBySlug(slug) {
         return null;
     }
     return mapDbProductToFrontend(product);
+}
+async function createProduct(data) {
+    const { fitments = [], images = [], availabilityStatus = client_1.AvailabilityStatus.AVAILABLE, // Default value
+    ...productData } = data;
+    // Generate slug if not provided
+    const slug = productData.slug || generateSlug(productData.name);
+    // Create the product with nested relations
+    const product = await prismaClient_1.prisma.product.create({
+        data: {
+            ...productData,
+            slug,
+            availabilityStatus, // Now this is guaranteed to have a value
+            price: new client_1.Prisma.Decimal(productData.price),
+            originalPrice: productData.originalPrice
+                ? new client_1.Prisma.Decimal(productData.originalPrice)
+                : null,
+            // Create relations
+            fitments: {
+                create: fitments.length > 0 ? fitments : [
+                    {
+                        side: client_1.Side.UNIVERSAL,
+                        yearFrom: productData.mainYear || new Date().getFullYear(),
+                        yearTo: productData.mainYear || new Date().getFullYear(),
+                    }
+                ],
+            },
+            images: {
+                create: images.length > 0 ? images : [
+                    {
+                        url: productData.image || FALLBACK_IMAGE,
+                        isPrimary: true,
+                    },
+                ],
+            },
+        },
+        include: PRODUCT_INCLUDE,
+    });
+    return mapDbProductToFrontend(product);
+}
+// Helper function to generate slug
+function generateSlug(name) {
+    return name
+        .toLowerCase()
+        .trim()
+        .replace(/[^\w\s-]/g, '')
+        .replace(/[\s_-]+/g, '-')
+        .replace(/^-+|-+$/g, '');
 }
 function mapDbProductToFrontend(product) {
     const primaryFitment = product.fitments[0];

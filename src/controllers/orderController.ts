@@ -1,5 +1,11 @@
 import { NextFunction, Request, Response } from "express";
-import { createOrder } from "../services/orderService";
+import {
+  createOrder,
+  getOrders,
+  getOrderById,
+  updateOrderStatus,
+  CreateOrderData
+} from "../services/orderService";
 
 export async function handleCreateOrder(
   req: Request,
@@ -7,43 +13,78 @@ export async function handleCreateOrder(
   next: NextFunction
 ) {
   try {
-    const { productId, customerName, customerEmail, customerPhone } = req.body;
+    const orderData: CreateOrderData = req.body;
 
-    const parsedProductId = Number(productId);
-    if (!Number.isInteger(parsedProductId) || parsedProductId <= 0) {
-      return res.status(400).json({
-        message: "productId must be a valid number",
-      });
+    // Validation
+    if (!orderData.customerEmail || !orderData.customerEmail.trim()) {
+      return res.status(400).json({ message: "Customer email is required" });
     }
 
-    if (
-      !customerEmail ||
-      typeof customerEmail !== "string" ||
-      customerEmail.trim().length === 0
-    ) {
-      return res.status(400).json({ message: "customerEmail is required" });
+    if (!orderData.productId || orderData.productId <= 0) {
+      return res.status(400).json({ message: "Valid product ID is required" });
     }
 
-    if (
-      !customerPhone ||
-      typeof customerPhone !== "string" ||
-      customerPhone.trim().length === 0
-    ) {
-      return res.status(400).json({ message: "customerPhone is required" });
-    }
-
-    const order = await createOrder({
-      productId: parsedProductId,
-      customerName: customerName?.trim(),
-      customerEmail: customerEmail.trim(),
-      customerPhone: customerPhone.trim(),
-    });
-
-    if (!order) {
-      return res.status(404).json({ message: "Product not found" });
-    }
-
+    const order = await createOrder(orderData);
     res.status(201).json(order);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function handleGetOrders(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const orders = await getOrders();
+    res.json(orders);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function handleGetOrderById(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Invalid order id" });
+    }
+
+    const order = await getOrderById(id);
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    res.json(order);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function handleUpdateOrderStatus(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const id = Number(req.params.id);
+    const { status } = req.body;
+
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Invalid order id" });
+    }
+
+    if (!status) {
+      return res.status(400).json({ message: "Status is required" });
+    }
+
+    const order = await updateOrderStatus(id, status);
+    res.json(order);
   } catch (error) {
     next(error);
   }

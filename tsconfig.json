@@ -1,3 +1,17 @@
+// {
+//   "compilerOptions": {
+//     "target": "ESNext",
+//     "module": "CommonJS",
+//     "lib": ["ESNext"],
+//     "strict": true,
+//     "esModuleInterop": true,
+//     "skipLibCheck": true,
+//     "outDir": "dist",
+//     "rootDir": "."
+//   },
+//   "include": ["src", "prisma/seed.ts"]
+// }
+
 {
   "compilerOptions": {
     "target": "ESNext",
@@ -7,7 +21,7 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "outDir": "dist",
-    "rootDir": "."
+    "rootDir": "src"
   },
-  "include": ["src", "prisma/seed.ts"]
+  "include": ["src"]
 }
