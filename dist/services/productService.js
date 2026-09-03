@@ -121,7 +121,7 @@ async function getProductBySlug(slug) {
     return mapDbProductToFrontend(product);
 }
 async function createProduct(data) {
-    const { fitments = [], images = [], availabilityStatus = client_1.AvailabilityStatus.AVAILABLE, // Default value
+    const { fitments = [], images = [], retainedImageIds: _retainedImageIds, availabilityStatus = client_1.AvailabilityStatus.AVAILABLE, // Default value
     ...productData } = data;
     const type = await validateProductRelations(productData);
     // Generate slug if not provided
@@ -161,15 +161,44 @@ async function createProduct(data) {
     return mapDbProductToFrontend(product);
 }
 async function updateProduct(id, data) {
-    const existing = await prismaClient_1.prisma.product.findUnique({ where: { id } });
+    const existing = await prismaClient_1.prisma.product.findUnique({
+        where: { id },
+        include: { images: true },
+    });
     if (!existing)
         throw Object.assign(new Error("Product not found"), { status: 404 });
-    const { fitments = [], images = [], availabilityStatus = existing.availabilityStatus, ...productData } = data;
+    const { fitments = [], images: newImages = [], retainedImageIds = [], availabilityStatus = existing.availabilityStatus, ...productData } = data;
     const type = await validateProductRelations(productData);
+    const retainedIdSet = new Set(retainedImageIds);
+    const invalidRetainedId = retainedImageIds.find((imageId) => !existing.images.some((image) => image.id === imageId));
+    if (invalidRetainedId !== undefined) {
+        throw Object.assign(new Error("One or more retained images do not belong to this product"), {
+            status: 400,
+        });
+    }
+    const retainedImages = existing.images
+        .filter((image) => retainedIdSet.has(image.id))
+        .map((image) => ({
+        url: image.url,
+        publicId: image.publicId,
+        assetId: image.assetId,
+        isPrimary: false,
+    }));
+    const finalImages = [...retainedImages, ...newImages].map((image, index) => ({
+        ...image,
+        isPrimary: index === 0,
+    }));
+    if (finalImages.length > 5) {
+        throw Object.assign(new Error("Maximum 5 images allowed per product"), { status: 400 });
+    }
+    const removedPublicIds = existing.images
+        .filter((image) => !retainedIdSet.has(image.id) && image.publicId)
+        .map((image) => image.publicId);
     const product = await prismaClient_1.prisma.product.update({
         where: { id },
         data: {
             ...productData,
+            image: finalImages[0]?.url ?? FALLBACK_IMAGE,
             type,
             slug: productData.slug || generateSlug(productData.name),
             availabilityStatus,
@@ -189,19 +218,23 @@ async function updateProduct(id, data) {
             },
             images: {
                 deleteMany: {},
-                create: images.length
-                    ? images
+                create: finalImages.length
+                    ? finalImages
                     : [{ url: productData.image || FALLBACK_IMAGE, isPrimary: true }],
             },
         },
         include: PRODUCT_INCLUDE,
     });
-    return mapDbProductToFrontend(product);
+    return { product: mapDbProductToFrontend(product), removedPublicIds };
 }
 async function deleteProduct(id) {
     const existing = await prismaClient_1.prisma.product.findUnique({
         where: { id },
-        select: { id: true, _count: { select: { orders: true } } },
+        select: {
+            id: true,
+            images: { select: { publicId: true } },
+            _count: { select: { orders: true } },
+        },
     });
     if (!existing)
         throw Object.assign(new Error("Product not found"), { status: 404 });
@@ -213,6 +246,7 @@ async function deleteProduct(id) {
         prismaClient_1.prisma.productFitment.deleteMany({ where: { productId: id } }),
         prismaClient_1.prisma.product.delete({ where: { id } }),
     ]);
+    return existing.images.flatMap((image) => (image.publicId ? [image.publicId] : []));
 }
 async function validateProductRelations(data) {
     const [category, brand, model] = await Promise.all([

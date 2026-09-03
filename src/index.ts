@@ -1,5 +1,4 @@
 import express from "express";
-import path from "path";
 import cors from "cors";
 import dotenv from "dotenv";
 dotenv.config();
@@ -13,9 +12,11 @@ import vehicleModelRoutes from './routes/vehicleModelRoutes';
 import userRoutes from './routes/userRoutes';
 import { Prisma } from "@prisma/client";
 import multer from "multer";
+import { configureCloudinary } from "./config/cloudinary";
 
 const app = express();
 const PORT = process.env.PORT || 4000;
+configureCloudinary();
 const allowedOrigins = [
   "http://localhost:3000",
   "http://localhost:3001",
@@ -39,7 +40,6 @@ app.use(
   })
 );
 app.use(express.json());
-app.use("/uploads", express.static(path.resolve(process.cwd(), "uploads")));
 
 app.get("/", (_req, res) => {
   res.json({ status: "ok", message: "Auto Parts API is running" });

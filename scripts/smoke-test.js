@@ -1,13 +1,10 @@
 require("dotenv").config();
 const jwt = require("jsonwebtoken");
-const fs = require("fs");
-const path = require("path");
 const { PrismaClient } = require("@prisma/client");
 
 const prisma = new PrismaClient();
 const apiBase = process.env.SMOKE_API_URL || `http://localhost:${process.env.PORT || 4000}`;
 let createdProductId;
-let uploadedFile;
 
 async function request(path, options = {}) {
   const response = await fetch(`${apiBase}${path}`, options);
@@ -42,13 +39,14 @@ async function main() {
   form.append("modelId", String(model.id));
   form.append("mainYear", "2024");
   form.append("side", "LEFT");
-  form.append("images", new Blob([Buffer.from("smoke-image")], { type: "image/png" }), "smoke.png");
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    "base64"
+  );
+  form.append("images", new Blob([png], { type: "image/png" }), "smoke.png");
 
   const created = await request("/api/products", { method: "POST", headers: authorization, body: form });
   createdProductId = Number(created.id);
-  uploadedFile = created.image.includes("/uploads/")
-    ? path.join(process.cwd(), "uploads", created.image.split("/uploads/").pop())
-    : undefined;
   if (!createdProductId || created.name !== form.get("name")) throw new Error("Product create contract failed");
 
   const update = new FormData();
@@ -58,7 +56,7 @@ async function main() {
   update.append("categoryId", String(category.id));
   update.append("brandId", String(model.brandId));
   update.append("modelId", String(model.id));
-  update.append("existingImages", created.image);
+  update.append("retainedImageIds", String(created.images[0].id));
   const updated = await request(`/api/products/${createdProductId}`, {
     method: "PUT",
     headers: authorization,
@@ -82,6 +80,5 @@ main()
       await prisma.productFitment.deleteMany({ where: { productId: createdProductId } });
       await prisma.product.deleteMany({ where: { id: createdProductId } });
     }
-    if (uploadedFile && fs.existsSync(uploadedFile)) fs.unlinkSync(uploadedFile);
     await prisma.$disconnect();
   });
