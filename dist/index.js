@@ -4,7 +4,6 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
-const path_1 = __importDefault(require("path"));
 const cors_1 = __importDefault(require("cors"));
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
@@ -17,8 +16,10 @@ const vehicleModelRoutes_1 = __importDefault(require("./routes/vehicleModelRoute
 const userRoutes_1 = __importDefault(require("./routes/userRoutes"));
 const client_1 = require("@prisma/client");
 const multer_1 = __importDefault(require("multer"));
+const cloudinary_1 = require("./config/cloudinary");
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 4000;
+(0, cloudinary_1.configureCloudinary)();
 const allowedOrigins = [
     "http://localhost:3000",
     "http://localhost:3001",
@@ -39,7 +40,6 @@ app.use((0, cors_1.default)({
     credentials: true,
 }));
 app.use(express_1.default.json());
-app.use("/uploads", express_1.default.static(path_1.default.resolve(process.cwd(), "uploads")));
 app.get("/", (_req, res) => {
     res.json({ status: "ok", message: "Auto Parts API is running" });
 });

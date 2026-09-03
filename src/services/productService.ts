@@ -34,8 +34,11 @@ export interface CreateProductData {
   // Image data
   images?: {
     url: string;
+    publicId?: string;
+    assetId?: string;
     isPrimary?: boolean;
   }[];
+  retainedImageIds?: number[];
 }
 
 export interface FrontendProduct {
@@ -223,6 +226,7 @@ export async function createProduct(
   const {
     fitments = [],
     images = [],
+    retainedImageIds: _retainedImageIds,
     availabilityStatus = AvailabilityStatus.AVAILABLE, // Default value
     ...productData
   } = data;
@@ -271,23 +275,56 @@ export async function createProduct(
 export async function updateProduct(
   id: number,
   data: CreateProductData
-): Promise<FrontendProduct> {
-  const existing = await prisma.product.findUnique({ where: { id } });
+): Promise<{ product: FrontendProduct; removedPublicIds: string[] }> {
+  const existing = await prisma.product.findUnique({
+    where: { id },
+    include: { images: true },
+  });
   if (!existing) throw Object.assign(new Error("Product not found"), { status: 404 });
 
   const {
     fitments = [],
-    images = [],
+    images: newImages = [],
+    retainedImageIds = [],
     availabilityStatus = existing.availabilityStatus,
     ...productData
   } = data;
 
   const type = await validateProductRelations(productData);
+  const retainedIdSet = new Set(retainedImageIds);
+  const invalidRetainedId = retainedImageIds.find(
+    (imageId) => !existing.images.some((image) => image.id === imageId)
+  );
+  if (invalidRetainedId !== undefined) {
+    throw Object.assign(new Error("One or more retained images do not belong to this product"), {
+      status: 400,
+    });
+  }
+
+  const retainedImages = existing.images
+    .filter((image) => retainedIdSet.has(image.id))
+    .map((image) => ({
+      url: image.url,
+      publicId: image.publicId,
+      assetId: image.assetId,
+      isPrimary: false,
+    }));
+  const finalImages = [...retainedImages, ...newImages].map((image, index) => ({
+    ...image,
+    isPrimary: index === 0,
+  }));
+  if (finalImages.length > 5) {
+    throw Object.assign(new Error("Maximum 5 images allowed per product"), { status: 400 });
+  }
+  const removedPublicIds = existing.images
+    .filter((image) => !retainedIdSet.has(image.id) && image.publicId)
+    .map((image) => image.publicId as string);
 
   const product = await prisma.product.update({
     where: { id },
     data: {
       ...productData,
+      image: finalImages[0]?.url ?? FALLBACK_IMAGE,
       type,
       slug: productData.slug || generateSlug(productData.name),
       availabilityStatus,
@@ -308,21 +345,25 @@ export async function updateProduct(
       },
       images: {
         deleteMany: {},
-        create: images.length
-          ? images
+        create: finalImages.length
+          ? finalImages
           : [{ url: productData.image || FALLBACK_IMAGE, isPrimary: true }],
       },
     },
     include: PRODUCT_INCLUDE,
   });
 
-  return mapDbProductToFrontend(product);
+  return { product: mapDbProductToFrontend(product), removedPublicIds };
 }
 
-export async function deleteProduct(id: number): Promise<void> {
+export async function deleteProduct(id: number): Promise<string[]> {
   const existing = await prisma.product.findUnique({
     where: { id },
-    select: { id: true, _count: { select: { orders: true } } },
+    select: {
+      id: true,
+      images: { select: { publicId: true } },
+      _count: { select: { orders: true } },
+    },
   });
   if (!existing) throw Object.assign(new Error("Product not found"), { status: 404 });
   if (existing._count.orders > 0) {
@@ -334,6 +375,8 @@ export async function deleteProduct(id: number): Promise<void> {
     prisma.productFitment.deleteMany({ where: { productId: id } }),
     prisma.product.delete({ where: { id } }),
   ]);
+
+  return existing.images.flatMap((image) => (image.publicId ? [image.publicId] : []));
 }
 
 async function validateProductRelations(

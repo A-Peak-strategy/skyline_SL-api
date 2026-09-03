@@ -10,6 +10,12 @@ import {
   deleteProduct,
 } from "../services/productService";
 import { AvailabilityStatus, Side } from "@prisma/client";
+import {
+  deleteProductImages,
+  StoredProductImage,
+  uploadProductImage,
+  uploadProductImageFromUrl,
+} from "../services/cloudinaryService";
 
 export async function handleListProducts(
   req: Request,
@@ -86,8 +92,16 @@ export async function handleCreateProduct(
     validateProductData(productData, res);
     if (res.headersSent) return;
 
-    const product = await createProduct(productData);
-    res.status(201).json(product);
+    const uploadedImages = await uploadRequestedImages(req);
+    try {
+      productData.images = toProductImages(uploadedImages);
+      productData.image = productData.images[0]?.url;
+      const product = await createProduct(productData);
+      res.status(201).json(product);
+    } catch (error) {
+      await cleanupNewUploads(uploadedImages);
+      throw error;
+    }
   } catch (error) {
     next(error);
   }
@@ -102,7 +116,21 @@ export async function handleUpdateProduct(req: Request, res: Response, next: Nex
     const productData = parseProductData(req);
     validateProductData(productData, res);
     if (res.headersSent) return;
-    res.json(await updateProduct(id, productData));
+
+    const uploadedImages = await uploadRequestedImages(req);
+    try {
+      productData.images = toProductImages(uploadedImages);
+      const { product, removedPublicIds } = await updateProduct(id, productData);
+      try {
+        await deleteProductImages(removedPublicIds);
+      } catch (cleanupError) {
+        console.error("Cloudinary cleanup failed after product update", cleanupError);
+      }
+      res.json(product);
+    } catch (error) {
+      await cleanupNewUploads(uploadedImages);
+      throw error;
+    }
   } catch (error) {
     next(error);
   }
@@ -114,7 +142,14 @@ export async function handleDeleteProduct(req: Request, res: Response, next: Nex
     if (!Number.isInteger(id) || id <= 0) {
       return res.status(400).json({ message: "Invalid product id" });
     }
-    await deleteProduct(id);
+    const publicIds = await deleteProduct(id);
+    try {
+      await deleteProductImages(publicIds);
+    } catch (cleanupError) {
+      // The database deletion has committed. Log for operational retry instead of
+      // returning an error that could make the client repeat the product deletion.
+      console.error("Cloudinary cleanup failed after product deletion", cleanupError);
+    }
     res.status(204).send();
   } catch (error) {
     next(error);
@@ -133,9 +168,6 @@ function validateProductData(productData: CreateProductData, res: Response): voi
 
 function parseProductData(req: Request): CreateProductData {
   const body = req.body ?? {};
-  const files = (req.files as Express.Multer.File[] | undefined) ?? [];
-  const existingImages = [...toArray(body.existingImages), ...toArray(body.image)];
-  const uploadedImages = files.map((file) => `/uploads/${file.filename}`);
   const side = parseSide(body.side);
   const yearFrom = optionalNumber(body.yearFrom ?? body.year ?? body.mainYear);
   const yearTo = optionalNumber(body.yearTo) ?? yearFrom;
@@ -156,15 +188,48 @@ function parseProductData(req: Request): CreateProductData {
       body.availabilityStatus === AvailabilityStatus.SOLD_OUT
         ? AvailabilityStatus.SOLD_OUT
         : AvailabilityStatus.AVAILABLE,
-    image: existingImages[0] ?? uploadedImages[0],
+    retainedImageIds: toArray(body.retainedImageIds)
+      .map(Number)
+      .filter((id) => Number.isInteger(id) && id > 0),
     fitments: yearFrom
       ? [{ side, yearFrom, yearTo: yearTo ?? yearFrom }]
       : [],
-    images: [...existingImages, ...uploadedImages].map((url, index) => ({
-      url,
-      isPrimary: index === 0,
-    })),
   };
+}
+
+async function uploadRequestedImages(req: Request): Promise<StoredProductImage[]> {
+  const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+  const remoteUrls = [...toArray(req.body?.imageUrls), ...toArray(req.body?.image)];
+  if (files.length + remoteUrls.length > 5) {
+    throw Object.assign(new Error("Maximum 5 images allowed per product"), { status: 400 });
+  }
+
+  const uploaded: StoredProductImage[] = [];
+  try {
+    for (const file of files) uploaded.push(await uploadProductImage(file));
+    for (const url of remoteUrls) uploaded.push(await uploadProductImageFromUrl(url));
+    return uploaded;
+  } catch (error) {
+    await cleanupNewUploads(uploaded);
+    throw error;
+  }
+}
+
+function toProductImages(images: StoredProductImage[]): NonNullable<CreateProductData["images"]> {
+  return images.map((image, index) => ({
+    url: image.url,
+    publicId: image.publicId,
+    assetId: image.assetId,
+    isPrimary: index === 0,
+  }));
+}
+
+async function cleanupNewUploads(images: StoredProductImage[]): Promise<void> {
+  try {
+    await deleteProductImages(images.map((image) => image.publicId));
+  } catch (cleanupError) {
+    console.error("Failed to roll back newly uploaded Cloudinary images", cleanupError);
+  }
 }
 
 function optionalString(value: unknown): string | undefined {

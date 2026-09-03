@@ -106,6 +106,8 @@ model ProductFitment {
 model ProductImage {
   id        Int     @id @default(autoincrement())
   url       String
+  publicId  String? @unique
+  assetId   String? @unique
   isPrimary Boolean @default(false)
 
   product   Product @relation(fields: [productId], references: [id])
