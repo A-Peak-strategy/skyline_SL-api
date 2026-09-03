@@ -4,6 +4,8 @@ exports.listProducts = listProducts;
 exports.getProductById = getProductById;
 exports.getProductBySlug = getProductBySlug;
 exports.createProduct = createProduct;
+exports.updateProduct = updateProduct;
+exports.deleteProduct = deleteProduct;
 const client_1 = require("@prisma/client");
 const prismaClient_1 = require("../prismaClient");
 const PRODUCT_INCLUDE = {
@@ -35,6 +37,13 @@ const SIDE_LABELS = {
     REAR: "Rear",
 };
 const FALLBACK_IMAGE = "https://placehold.co/600x400?text=Auto+Part";
+function resolveImageUrl(url) {
+    if (!url.startsWith("/uploads/"))
+        return url;
+    const publicBaseUrl = (process.env.API_PUBLIC_URL || `http://localhost:${process.env.PORT || 4000}`)
+        .replace(/\/$/, "");
+    return `${publicBaseUrl}${url}`;
+}
 async function listProducts(filters = {}) {
     const { make, model, year, side, category } = filters;
     const conditions = [];
@@ -114,12 +123,14 @@ async function getProductBySlug(slug) {
 async function createProduct(data) {
     const { fitments = [], images = [], availabilityStatus = client_1.AvailabilityStatus.AVAILABLE, // Default value
     ...productData } = data;
+    const type = await validateProductRelations(productData);
     // Generate slug if not provided
     const slug = productData.slug || generateSlug(productData.name);
     // Create the product with nested relations
     const product = await prismaClient_1.prisma.product.create({
         data: {
             ...productData,
+            type,
             slug,
             availabilityStatus, // Now this is guaranteed to have a value
             price: new client_1.Prisma.Decimal(productData.price),
@@ -148,6 +159,75 @@ async function createProduct(data) {
         include: PRODUCT_INCLUDE,
     });
     return mapDbProductToFrontend(product);
+}
+async function updateProduct(id, data) {
+    const existing = await prismaClient_1.prisma.product.findUnique({ where: { id } });
+    if (!existing)
+        throw Object.assign(new Error("Product not found"), { status: 404 });
+    const { fitments = [], images = [], availabilityStatus = existing.availabilityStatus, ...productData } = data;
+    const type = await validateProductRelations(productData);
+    const product = await prismaClient_1.prisma.product.update({
+        where: { id },
+        data: {
+            ...productData,
+            type,
+            slug: productData.slug || generateSlug(productData.name),
+            availabilityStatus,
+            price: new client_1.Prisma.Decimal(productData.price),
+            originalPrice: productData.originalPrice !== undefined && productData.originalPrice !== null
+                ? new client_1.Prisma.Decimal(productData.originalPrice)
+                : null,
+            fitments: {
+                deleteMany: {},
+                create: fitments.length
+                    ? fitments
+                    : [{
+                            side: client_1.Side.UNIVERSAL,
+                            yearFrom: productData.mainYear || new Date().getFullYear(),
+                            yearTo: productData.mainYear || new Date().getFullYear(),
+                        }],
+            },
+            images: {
+                deleteMany: {},
+                create: images.length
+                    ? images
+                    : [{ url: productData.image || FALLBACK_IMAGE, isPrimary: true }],
+            },
+        },
+        include: PRODUCT_INCLUDE,
+    });
+    return mapDbProductToFrontend(product);
+}
+async function deleteProduct(id) {
+    const existing = await prismaClient_1.prisma.product.findUnique({
+        where: { id },
+        select: { id: true, _count: { select: { orders: true } } },
+    });
+    if (!existing)
+        throw Object.assign(new Error("Product not found"), { status: 404 });
+    if (existing._count.orders > 0) {
+        throw Object.assign(new Error("Products with orders cannot be deleted"), { status: 409 });
+    }
+    await prismaClient_1.prisma.$transaction([
+        prismaClient_1.prisma.productImage.deleteMany({ where: { productId: id } }),
+        prismaClient_1.prisma.productFitment.deleteMany({ where: { productId: id } }),
+        prismaClient_1.prisma.product.delete({ where: { id } }),
+    ]);
+}
+async function validateProductRelations(data) {
+    const [category, brand, model] = await Promise.all([
+        prismaClient_1.prisma.category.findUnique({ where: { id: data.categoryId } }),
+        prismaClient_1.prisma.brand.findUnique({ where: { id: data.brandId } }),
+        prismaClient_1.prisma.vehicleModel.findUnique({ where: { id: data.modelId } }),
+    ]);
+    if (!category)
+        throw Object.assign(new Error("Category not found"), { status: 400 });
+    if (!brand)
+        throw Object.assign(new Error("Brand not found"), { status: 400 });
+    if (!model || model.brandId !== brand.id) {
+        throw Object.assign(new Error("The selected model does not belong to the selected brand"), { status: 400 });
+    }
+    return category.type;
 }
 // Helper function to generate slug
 function generateSlug(name) {
@@ -195,13 +275,33 @@ function mapDbProductToFrontend(product) {
         availability: product.availabilityStatus === client_1.AvailabilityStatus.AVAILABLE
             ? "Available"
             : "Sold Out",
-        image: primaryImage,
+        image: resolveImageUrl(primaryImage),
         description: product.description,
         compatibility,
         offer: product.offerTag ?? null,
         brand: product.brand.name,
         type: product.category.name,
         condition: product.condition ?? "New",
+        slug: product.slug,
+        categoryId: product.categoryId,
+        brandId: product.brandId,
+        modelId: product.modelId,
+        availabilityStatus: product.availabilityStatus,
+        mainYear: product.mainYear,
+        yearFrom: primaryFitment?.yearFrom ?? null,
+        yearTo: primaryFitment?.yearTo ?? null,
+        fitments: product.fitments.map((fitment) => ({
+            id: fitment.id,
+            side: fitment.side,
+            yearFrom: fitment.yearFrom,
+            yearTo: fitment.yearTo,
+            compatibilityNotes: fitment.compatibilityNotes,
+        })),
+        images: product.images.map((image) => ({
+            id: image.id,
+            url: resolveImageUrl(image.url),
+            isPrimary: image.isPrimary,
+        })),
     };
 }
 function mapCategoryLabelToType(label) {

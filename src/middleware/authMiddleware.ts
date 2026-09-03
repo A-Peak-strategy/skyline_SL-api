@@ -9,7 +9,11 @@ export interface AuthRequest extends Request {
   };
 }
 
-const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
+const JWT_SECRET = process.env.JWT_SECRET || "development-only-change-me";
+
+if (process.env.NODE_ENV === "production" && !process.env.JWT_SECRET) {
+  throw new Error("JWT_SECRET is required in production");
+}
 
 export function authenticateToken(req: AuthRequest, res: Response, next: NextFunction) {
   const authHeader = req.headers['authorization'];
@@ -35,4 +39,11 @@ export function authenticateToken(req: AuthRequest, res: Response, next: NextFun
 
 export function generateToken(payload: { userId: number; email: string; role: string }): string {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: '24h' });
+}
+
+export function requireAdmin(req: AuthRequest, res: Response, next: NextFunction) {
+  if (req.user?.role !== "ADMIN") {
+    return res.status(403).json({ message: "Administrator access required" });
+  }
+  next();
 }

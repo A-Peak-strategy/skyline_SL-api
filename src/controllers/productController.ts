@@ -6,7 +6,10 @@ import {
   ProductFilters,
   createProduct,
   CreateProductData,
+  updateProduct,
+  deleteProduct,
 } from "../services/productService";
+import { AvailabilityStatus, Side } from "@prisma/client";
 
 export async function handleListProducts(
   req: Request,
@@ -79,21 +82,109 @@ export async function handleCreateProduct(
   next: NextFunction
 ) {
   try {
-    const productData: CreateProductData = req.body;
-    // Basic validation
-    if (!productData.name || !productData.name.trim()) {
-      return res.status(400).json({ message: "Product name is required" });
-    }
-
-    if (!productData.price || productData.price <= 0) {
-      return res.status(400).json({ message: "Valid price is required" });
-    }
+    const productData = parseProductData(req);
+    validateProductData(productData, res);
+    if (res.headersSent) return;
 
     const product = await createProduct(productData);
     res.status(201).json(product);
   } catch (error) {
     next(error);
   }
+}
+
+export async function handleUpdateProduct(req: Request, res: Response, next: NextFunction) {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Invalid product id" });
+    }
+    const productData = parseProductData(req);
+    validateProductData(productData, res);
+    if (res.headersSent) return;
+    res.json(await updateProduct(id, productData));
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function handleDeleteProduct(req: Request, res: Response, next: NextFunction) {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Invalid product id" });
+    }
+    await deleteProduct(id);
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+}
+
+function validateProductData(productData: CreateProductData, res: Response): void {
+  if (!productData.name?.trim()) {
+    res.status(400).json({ message: "Product name is required" });
+  } else if (!Number.isFinite(productData.price) || productData.price <= 0) {
+    res.status(400).json({ message: "Valid price is required" });
+  } else if (![productData.categoryId, productData.brandId, productData.modelId].every(Number.isInteger)) {
+    res.status(400).json({ message: "Category, brand, and model are required" });
+  }
+}
+
+function parseProductData(req: Request): CreateProductData {
+  const body = req.body ?? {};
+  const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+  const existingImages = [...toArray(body.existingImages), ...toArray(body.image)];
+  const uploadedImages = files.map((file) => `/uploads/${file.filename}`);
+  const side = parseSide(body.side);
+  const yearFrom = optionalNumber(body.yearFrom ?? body.year ?? body.mainYear);
+  const yearTo = optionalNumber(body.yearTo) ?? yearFrom;
+
+  return {
+    name: String(body.name ?? "").trim(),
+    description: String(body.description ?? "").trim(),
+    price: Number(body.price),
+    originalPrice: optionalNumber(body.originalPrice),
+    categoryId: Number(body.categoryId),
+    brandId: Number(body.brandId),
+    modelId: Number(body.modelId),
+    condition: optionalString(body.condition),
+    offerTag: optionalString(body.offerTag ?? body.badge),
+    slug: optionalString(body.slug),
+    mainYear: optionalNumber(body.mainYear ?? body.year),
+    availabilityStatus:
+      body.availabilityStatus === AvailabilityStatus.SOLD_OUT
+        ? AvailabilityStatus.SOLD_OUT
+        : AvailabilityStatus.AVAILABLE,
+    image: existingImages[0] ?? uploadedImages[0],
+    fitments: yearFrom
+      ? [{ side, yearFrom, yearTo: yearTo ?? yearFrom }]
+      : [],
+    images: [...existingImages, ...uploadedImages].map((url, index) => ({
+      url,
+      isPrimary: index === 0,
+    })),
+  };
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  if (value === "" || value === null || value === undefined) return undefined;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : undefined;
+}
+
+function toArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string" && !!item.trim());
+  return typeof value === "string" && value.trim() ? [value.trim()] : [];
+}
+
+function parseSide(value: unknown): Side {
+  const normalized = String(value ?? "UNIVERSAL").toUpperCase();
+  return Object.values(Side).includes(normalized as Side) ? (normalized as Side) : Side.UNIVERSAL;
 }
 
 function extractQueryString(value: unknown): string | undefined {

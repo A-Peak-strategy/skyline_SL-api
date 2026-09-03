@@ -3,6 +3,7 @@ import {
   signupUser,
   loginUser,
   getUserProfile,
+  hasRegisteredUsers,
   SignupData,
   LoginData
 } from "../services/userService";
@@ -14,6 +15,9 @@ export async function handleUserSignup(
   next: NextFunction
 ) {
   try {
+    if (process.env.ALLOW_ADMIN_SIGNUP !== "true" && await hasRegisteredUsers()) {
+      return res.status(403).json({ message: "Administrator registration is disabled" });
+    }
     const userData: SignupData = req.body;
 
     // Validation
