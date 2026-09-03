@@ -14,7 +14,7 @@ export interface CreateProductData {
   description: string;
   price: number;
   originalPrice?: number;
-  type: ProductType;
+  type?: ProductType;
   categoryId: number;
   brandId: number;
   modelId: number;
@@ -56,6 +56,22 @@ export interface FrontendProduct {
   brand?: string;
   type?: string;
   condition?: string;
+  slug: string;
+  categoryId: number;
+  brandId: number;
+  modelId: number;
+  availabilityStatus: AvailabilityStatus;
+  mainYear: number | null;
+  yearFrom: number | null;
+  yearTo: number | null;
+  fitments: Array<{
+    id: number;
+    side: Side;
+    yearFrom: number;
+    yearTo: number;
+    compatibilityNotes: string | null;
+  }>;
+  images: Array<{ id: number; url: string; isPrimary: boolean }>;
 }
 
 const PRODUCT_INCLUDE = {
@@ -94,6 +110,13 @@ type ProductWithRelations = Prisma.ProductGetPayload<{
 }>;
 
 const FALLBACK_IMAGE = "https://placehold.co/600x400?text=Auto+Part";
+
+function resolveImageUrl(url: string): string {
+  if (!url.startsWith("/uploads/")) return url;
+  const publicBaseUrl = (process.env.API_PUBLIC_URL || `http://localhost:${process.env.PORT || 4000}`)
+    .replace(/\/$/, "");
+  return `${publicBaseUrl}${url}`;
+}
 
 export async function listProducts(
   filters: ProductFilters = {}
@@ -204,6 +227,8 @@ export async function createProduct(
     ...productData
   } = data;
 
+  const type = await validateProductRelations(productData);
+
   // Generate slug if not provided
   const slug = productData.slug || generateSlug(productData.name);
 
@@ -211,6 +236,7 @@ export async function createProduct(
   const product = await prisma.product.create({
     data: {
       ...productData,
+      type,
       slug,
       availabilityStatus, // Now this is guaranteed to have a value
       price: new Prisma.Decimal(productData.price),
@@ -240,6 +266,95 @@ export async function createProduct(
   });
 
   return mapDbProductToFrontend(product);
+}
+
+export async function updateProduct(
+  id: number,
+  data: CreateProductData
+): Promise<FrontendProduct> {
+  const existing = await prisma.product.findUnique({ where: { id } });
+  if (!existing) throw Object.assign(new Error("Product not found"), { status: 404 });
+
+  const {
+    fitments = [],
+    images = [],
+    availabilityStatus = existing.availabilityStatus,
+    ...productData
+  } = data;
+
+  const type = await validateProductRelations(productData);
+
+  const product = await prisma.product.update({
+    where: { id },
+    data: {
+      ...productData,
+      type,
+      slug: productData.slug || generateSlug(productData.name),
+      availabilityStatus,
+      price: new Prisma.Decimal(productData.price),
+      originalPrice:
+        productData.originalPrice !== undefined && productData.originalPrice !== null
+          ? new Prisma.Decimal(productData.originalPrice)
+          : null,
+      fitments: {
+        deleteMany: {},
+        create: fitments.length
+          ? fitments
+          : [{
+              side: Side.UNIVERSAL,
+              yearFrom: productData.mainYear || new Date().getFullYear(),
+              yearTo: productData.mainYear || new Date().getFullYear(),
+            }],
+      },
+      images: {
+        deleteMany: {},
+        create: images.length
+          ? images
+          : [{ url: productData.image || FALLBACK_IMAGE, isPrimary: true }],
+      },
+    },
+    include: PRODUCT_INCLUDE,
+  });
+
+  return mapDbProductToFrontend(product);
+}
+
+export async function deleteProduct(id: number): Promise<void> {
+  const existing = await prisma.product.findUnique({
+    where: { id },
+    select: { id: true, _count: { select: { orders: true } } },
+  });
+  if (!existing) throw Object.assign(new Error("Product not found"), { status: 404 });
+  if (existing._count.orders > 0) {
+    throw Object.assign(new Error("Products with orders cannot be deleted"), { status: 409 });
+  }
+
+  await prisma.$transaction([
+    prisma.productImage.deleteMany({ where: { productId: id } }),
+    prisma.productFitment.deleteMany({ where: { productId: id } }),
+    prisma.product.delete({ where: { id } }),
+  ]);
+}
+
+async function validateProductRelations(
+  data: Pick<CreateProductData, "categoryId" | "brandId" | "modelId">
+): Promise<ProductType> {
+  const [category, brand, model] = await Promise.all([
+    prisma.category.findUnique({ where: { id: data.categoryId } }),
+    prisma.brand.findUnique({ where: { id: data.brandId } }),
+    prisma.vehicleModel.findUnique({ where: { id: data.modelId } }),
+  ]);
+
+  if (!category) throw Object.assign(new Error("Category not found"), { status: 400 });
+  if (!brand) throw Object.assign(new Error("Brand not found"), { status: 400 });
+  if (!model || model.brandId !== brand.id) {
+    throw Object.assign(
+      new Error("The selected model does not belong to the selected brand"),
+      { status: 400 }
+    );
+  }
+
+  return category.type;
 }
 
 // Helper function to generate slug
@@ -299,13 +414,33 @@ function mapDbProductToFrontend(product: ProductWithRelations): FrontendProduct 
       product.availabilityStatus === AvailabilityStatus.AVAILABLE
         ? "Available"
         : "Sold Out",
-    image: primaryImage,
+    image: resolveImageUrl(primaryImage),
     description: product.description,
     compatibility,
     offer: product.offerTag ?? null,
     brand: product.brand.name,
     type: product.category.name,
     condition: product.condition ?? "New",
+    slug: product.slug,
+    categoryId: product.categoryId,
+    brandId: product.brandId,
+    modelId: product.modelId,
+    availabilityStatus: product.availabilityStatus,
+    mainYear: product.mainYear,
+    yearFrom: primaryFitment?.yearFrom ?? null,
+    yearTo: primaryFitment?.yearTo ?? null,
+    fitments: product.fitments.map((fitment) => ({
+      id: fitment.id,
+      side: fitment.side,
+      yearFrom: fitment.yearFrom,
+      yearTo: fitment.yearTo,
+      compatibilityNotes: fitment.compatibilityNotes,
+    })),
+    images: product.images.map((image) => ({
+      id: image.id,
+      url: resolveImageUrl(image.url),
+      isPrimary: image.isPrimary,
+    })),
   };
 }
 

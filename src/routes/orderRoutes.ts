@@ -5,12 +5,13 @@ import {
   handleGetOrderById,
   handleUpdateOrderStatus
 } from "../controllers/orderController";
+import { authenticateToken, requireAdmin } from "../middleware/authMiddleware";
 
 const router = Router();
 
-router.get("/", handleGetOrders);
-router.get("/:id", handleGetOrderById);
+router.get("/", authenticateToken, requireAdmin, handleGetOrders);
+router.get("/:id", authenticateToken, requireAdmin, handleGetOrderById);
 router.post("/", handleCreateOrder);
-router.patch("/:id/status", handleUpdateOrderStatus);
+router.patch("/:id/status", authenticateToken, requireAdmin, handleUpdateOrderStatus);
 
 export default router;

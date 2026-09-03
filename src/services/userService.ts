@@ -149,3 +149,7 @@ function mapDbUserToFrontend(user: any): FrontendUser {
     updatedAt: user.updatedAt,
   };
 }
+
+export async function hasRegisteredUsers(): Promise<boolean> {
+  return (await prisma.user.count()) > 0;
+}

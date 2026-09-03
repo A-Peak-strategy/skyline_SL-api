@@ -6,6 +6,7 @@ import {
   updateOrderStatus,
   CreateOrderData
 } from "../services/orderService";
+import { OrderStatus } from "@prisma/client";
 
 export async function handleCreateOrder(
   req: Request,
@@ -79,8 +80,8 @@ export async function handleUpdateOrderStatus(
       return res.status(400).json({ message: "Invalid order id" });
     }
 
-    if (!status) {
-      return res.status(400).json({ message: "Status is required" });
+    if (!Object.values(OrderStatus).includes(status as OrderStatus)) {
+      return res.status(400).json({ message: "Invalid order status" });
     }
 
     const order = await updateOrderStatus(id, status);

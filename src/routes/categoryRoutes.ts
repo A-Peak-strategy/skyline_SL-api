@@ -6,13 +6,14 @@ import {
   handleUpdateCategory,
   handleDeleteCategory
 } from "../controllers/categoryController";
+import { authenticateToken, requireAdmin } from "../middleware/authMiddleware";
 
 const router = Router();
 
 router.get("/", handleGetCategories);
 router.get("/:id", handleGetCategoryById);
-router.post("/", handleCreateCategory);
-router.put("/:id", handleUpdateCategory);
-router.delete("/:id", handleDeleteCategory);
+router.post("/", authenticateToken, requireAdmin, handleCreateCategory);
+router.put("/:id", authenticateToken, requireAdmin, handleUpdateCategory);
+router.delete("/:id", authenticateToken, requireAdmin, handleDeleteCategory);
 
 export default router;

@@ -1,4 +1,5 @@
 import express from "express";
+import path from "path";
 import cors from "cors";
 import dotenv from "dotenv";
 dotenv.config();
@@ -10,22 +11,35 @@ import categoryRoutes from "./routes/categoryRoutes";
 import brandRoutes from './routes/brandRoutes';
 import vehicleModelRoutes from './routes/vehicleModelRoutes';
 import userRoutes from './routes/userRoutes';
+import { Prisma } from "@prisma/client";
+import multer from "multer";
 
 const app = express();
 const PORT = process.env.PORT || 4000;
-const FRONTEND_ORIGIN = process.env.FRONTEND_URL ?? "http://localhost:5173";
+const allowedOrigins = [
+  "http://localhost:3000",
+  "http://localhost:3001",
+  "http://localhost:5173",
+  ...(process.env.FRONTEND_URLS || process.env.FRONTEND_URL || "").split(","),
+]
+  .map((origin) => origin.trim())
+  .filter((origin, index, origins) => Boolean(origin) && origins.indexOf(origin) === index);
 
 console.log("🚀 Starting server initialization...");
 console.log("PORT:", PORT);
-console.log("FRONTEND_ORIGIN:", FRONTEND_ORIGIN);
+console.log("ALLOWED_ORIGINS:", allowedOrigins.join(", "));
 
 app.use(
   cors({
-    origin: FRONTEND_ORIGIN,
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+      callback(Object.assign(new Error("Origin is not allowed by CORS"), { status: 403 }));
+    },
     credentials: true,
   })
 );
 app.use(express.json());
+app.use("/uploads", express.static(path.resolve(process.cwd(), "uploads")));
 
 app.get("/", (_req, res) => {
   res.json({ status: "ok", message: "Auto Parts API is running" });
@@ -61,7 +75,13 @@ app.use((req, res) => {
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error("⚠️ Unhandled error:", err);
-  const status = typeof err?.status === "number" ? err.status : 500;
+  let status = typeof err?.status === "number" ? err.status : 500;
+  if (err instanceof multer.MulterError) status = 400;
+  if (err instanceof Prisma.PrismaClientKnownRequestError) {
+    if (err.code === "P2002") status = 409;
+    if (err.code === "P2003") status = 409;
+    if (err.code === "P2025") status = 404;
+  }
   const message =
     typeof err?.message === "string" && err.message.length > 0
       ? err.message
